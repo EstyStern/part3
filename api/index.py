@@ -1,93 +1,92 @@
-from http.server import BaseHTTPRequestHandler
 import os
-import requests
 import json
-from urllib.parse import urlparse, parse_qs
+import requests
 
-class handler(BaseHTTPRequestHandler):
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+def handler(request):
+    """
+    Vercel serverless function that sends text to AI and checks if response contains a specific word.
+    """
+    # Handle CORS
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Content-Type': 'application/json'
+    }
     
-    def do_GET(self):
-        self.handle_request()
+    # Handle preflight
+    if hasattr(request, 'method') and request.method == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': ''
+        }
     
-    def do_POST(self):
-        self.handle_request()
-    
-    def handle_request(self):
-        """Vercel serverless function that sends text to AI and checks if response contains a specific word."""
-        try:
-            # Parse query parameters
-            parsed_path = urlparse(self.path)
-            query_params = parse_qs(parsed_path.query)
-            
-            # Get request body for POST
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length) if content_length > 0 else b''
-            
-            # Parse JSON body if present
-            data = {}
-            if body:
-                try:
-                    data = json.loads(body.decode('utf-8'))
-                except:
-                    pass
-            
-            # Get parameters from body or query
-            text_to_ai = data.get('text_to_ai', '') or (query_params.get('text_to_ai', [''])[0] if query_params.get('text_to_ai') else '')
-            word_to_check = data.get('word_to_check', '') or (query_params.get('word_to_check', [''])[0] if query_params.get('word_to_check') else '')
-            
-            # Validate parameters
-            if not text_to_ai:
-                self.send_response(400)
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'error': 'Missing required parameter: text_to_ai'}).encode())
-                return
-            
-            if not word_to_check:
-                self.send_response(400)
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'error': 'Missing required parameter: word_to_check'}).encode())
-                return
-            
-            # Call AI service
-            ai_response = call_ai_service(text_to_ai)
-            
-            # Check if word is in response
-            word_found = word_to_check.lower() in ai_response.lower()
-            
-            # Return response
-            result = {
-                'text_to_ai': text_to_ai,
-                'word_to_check': word_to_check,
-                'ai_response': ai_response,
-                'word_found': word_found,
-                'message': f"Word '{word_to_check}' {'found' if word_found else 'not found'} in AI response"
+    try:
+        # Get request body
+        body = getattr(request, 'body', '')
+        if isinstance(body, bytes):
+            body = body.decode('utf-8')
+        
+        data = {}
+        if body:
+            try:
+                data = json.loads(body)
+            except:
+                pass
+        
+        # Get query parameters
+        query = getattr(request, 'query', {}) or getattr(request, 'args', {}) or {}
+        
+        # Get parameters from body or query
+        text_to_ai = data.get('text_to_ai', '') or query.get('text_to_ai', '')
+        word_to_check = data.get('word_to_check', '') or query.get('word_to_check', '')
+        
+        # Validate parameters
+        if not text_to_ai:
+            return {
+                'statusCode': 400,
+                'headers': headers,
+                'body': json.dumps({'error': 'Missing required parameter: text_to_ai'})
             }
-            
-            self.send_response(200)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({
+        
+        if not word_to_check:
+            return {
+                'statusCode': 400,
+                'headers': headers,
+                'body': json.dumps({'error': 'Missing required parameter: word_to_check'})
+            }
+        
+        # Call AI service
+        ai_response = call_ai_service(text_to_ai)
+        
+        # Check if word is in response
+        word_found = word_to_check.lower() in ai_response.lower()
+        
+        # Return response
+        result = {
+            'text_to_ai': text_to_ai,
+            'word_to_check': word_to_check,
+            'ai_response': ai_response,
+            'word_found': word_found,
+            'message': f"Word '{word_to_check}' {'found' if word_found else 'not found'} in AI response"
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps(result)
+        }
+        
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'headers': headers,
+            'body': json.dumps({
                 'error': str(e),
                 'message': 'An error occurred while processing the request'
-            }).encode())
+            })
+        }
 
 
 def call_ai_service(text):
@@ -101,7 +100,6 @@ def call_ai_service(text):
         return f"This is a mock AI response to: {text}. The response includes various words."
     
     try:
-        # OpenAI API format
         headers = {
             'Authorization': f'Bearer {ai_api_key}',
             'Content-Type': 'application/json'
@@ -109,9 +107,7 @@ def call_ai_service(text):
         
         payload = {
             'model': ai_model,
-            'messages': [
-                {'role': 'user', 'content': text}
-            ],
+            'messages': [{'role': 'user', 'content': text}],
             'max_tokens': 500,
             'temperature': 0.7
         }
@@ -121,7 +117,6 @@ def call_ai_service(text):
         
         data = response.json()
         
-        # Extract text from OpenAI response
         if 'choices' in data and len(data['choices']) > 0:
             return data['choices'][0]['message']['content'].strip()
         else:
